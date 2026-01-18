@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Product, Category, Staff, CartItem, OrderWithItems } from "../types";
+import { Product, Category, Staff, CartItem, OrderWithItems, DaySession } from "../types";
 import {
   getProducts,
   getCategories,
@@ -9,7 +9,11 @@ import {
   getOpenOrders,
   addItemsToOrder,
   markOrderPaid,
+  decreaseItemQuantity,
+  increaseItemQuantity,
   verifyStaffPin,
+  getActiveSession,
+  startDay,
 } from "../hooks/useTauri";
 import { StaffSelector } from "../components/StaffSelector";
 import { ProductGrid } from "../components/ProductGrid";
@@ -32,6 +36,7 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [showPinModal, setShowPinModal] = useState(false);
+  const [daySession, setDaySession] = useState<DaySession | null>(null);
 
   // Get the order for a specific table number
   const getTableOrder = useCallback((tableNum: number): OrderWithItems | undefined => {
@@ -43,18 +48,20 @@ export function Dashboard() {
 
   const loadData = useCallback(async () => {
     try {
-      const [prods, cats, staffList, lowStockList, tables] = await Promise.all([
+      const [prods, cats, staffList, lowStockList, tables, session] = await Promise.all([
         getProducts(),
         getCategories(),
         getStaff(),
         getLowStock(),
         getOpenOrders(),
+        getActiveSession(),
       ]);
       setProducts(prods);
       setCategories(cats);
       setStaff(staffList);
       setLowStock(lowStockList);
       setOpenTables(tables);
+      setDaySession(session);
 
       // Restore selected staff from localStorage
       const savedStaffId = localStorage.getItem(STAFF_STORAGE_KEY);
@@ -71,6 +78,20 @@ export function Dashboard() {
       setLoading(false);
     }
   }, [selectedStaff]);
+
+  // Start day handler
+  const handleStartDay = async () => {
+    if (!selectedStaff) {
+      setError("Please select a staff member first");
+      return;
+    }
+    try {
+      const session = await startDay(selectedStaff.id);
+      setDaySession(session);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
 
   useEffect(() => {
     loadData();
@@ -222,6 +243,22 @@ export function Dashboard() {
           selectedStaff={selectedStaff}
           onSelect={handleStaffSelect}
         />
+        <div className="day-controls">
+          {daySession ? (
+            <span className="day-session-badge">
+              Day active ({daySession.started_by_name})
+            </span>
+          ) : (
+            <button
+              className="start-day-btn-small"
+              onClick={handleStartDay}
+              disabled={!selectedStaff}
+              title={!selectedStaff ? "Select staff first" : "Start a new day session"}
+            >
+              Start Day
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="dash-body">
@@ -281,8 +318,39 @@ export function Dashboard() {
               <div className="existing-items-title">Current Items</div>
               {selectedTableOrder.items.map((item) => (
                 <div key={item.id} className="existing-item">
-                  <span>{item.quantity}× {item.product_name}</span>
-                  <span>{(item.price_at_sale * item.quantity).toFixed(0)}</span>
+                  <span className="existing-item-name">{item.product_name}</span>
+                  <div className="existing-item-controls">
+                    <button
+                      className="qty-btn"
+                      onClick={async () => {
+                        try {
+                          await decreaseItemQuantity(item.id);
+                          await loadData();
+                        } catch (e) {
+                          setError(String(e));
+                        }
+                      }}
+                      title="Decrease quantity"
+                    >
+                      −
+                    </button>
+                    <span className="qty-display">{item.quantity}</span>
+                    <button
+                      className="qty-btn"
+                      onClick={async () => {
+                        try {
+                          await increaseItemQuantity(item.id);
+                          await loadData();
+                        } catch (e) {
+                          setError(String(e));
+                        }
+                      }}
+                      title="Increase quantity"
+                    >
+                      +
+                    </button>
+                    <span className="item-total">{(item.price_at_sale * item.quantity).toFixed(0)}</span>
+                  </div>
                 </div>
               ))}
               <div className="existing-items-total">

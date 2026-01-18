@@ -2,6 +2,9 @@ mod commands;
 mod db;
 mod models;
 
+#[cfg(test)]
+mod tests;
+
 use commands::{categories, orders, products, reports, staff};
 use db::Database;
 use tauri::{
@@ -81,11 +84,19 @@ pub fn run() {
             orders::get_order,
             orders::add_items_to_order,
             orders::mark_order_paid,
+            orders::decrease_item_quantity,
+            orders::increase_item_quantity,
             orders::update_order_notes,
             // Reports
             reports::close_day,
             reports::get_sales_history,
             reports::get_day_summary,
+            reports::get_orders_by_date_range,
+            reports::create_day_closing_for_date,
+            // Day Sessions
+            reports::get_active_session,
+            reports::start_day,
+            reports::is_day_active,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

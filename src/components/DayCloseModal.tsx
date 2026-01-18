@@ -1,6 +1,5 @@
-import { save } from "@tauri-apps/plugin-dialog";
-import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { DaySummary } from "../types";
+import { exportToCSV, exportToText, exportToExcel } from "../utils/exportReport";
 
 interface ProductSummary {
   name: string;
@@ -13,6 +12,7 @@ interface DayCloseModalProps {
   onConfirm: () => void;
   onCancel: () => void;
   loading?: boolean;
+  children?: React.ReactNode;
 }
 
 export function DayCloseModal({
@@ -20,6 +20,7 @@ export function DayCloseModal({
   onConfirm,
   onCancel,
   loading,
+  children,
 }: DayCloseModalProps) {
   // Aggregate products sold
   const productSummary: ProductSummary[] = [];
@@ -44,78 +45,6 @@ export function DayCloseModal({
 
   productMap.forEach((value) => productSummary.push(value));
   productSummary.sort((a, b) => b.revenue - a.revenue);
-
-  const exportToCSV = async () => {
-    // Use semicolon separator for better Excel compatibility
-    const lines = [
-      `Date;${summary.date}`,
-      `Total Orders;${summary.total_orders}`,
-      `Total Revenue;${summary.total_revenue.toFixed(0)} ALL`,
-      ``,
-      `Product;Quantity;Revenue (ALL)`,
-      ...productSummary.map((p) =>
-        `${p.name};${p.quantity};${p.revenue.toFixed(0)}`
-      ),
-      ``,
-      `TOTAL;${productSummary.reduce((sum, p) => sum + p.quantity, 0)};${summary.total_revenue.toFixed(0)}`,
-    ];
-
-    const csvContent = lines.join("\n");
-
-    try {
-      const filePath = await save({
-        defaultPath: `day-report-${summary.date}.csv`,
-        filters: [{ name: "CSV", extensions: ["csv"] }],
-      });
-      if (filePath) {
-        await writeTextFile(filePath, csvContent);
-        alert("CSV saved successfully!");
-      }
-    } catch (e) {
-      alert("Failed to save CSV: " + e);
-      console.error("Failed to save CSV:", e);
-    }
-  };
-
-  const exportToText = async () => {
-    const lines = [
-      `═══════════════════════════════════════`,
-      `       DAY REPORT - ${summary.date}`,
-      `═══════════════════════════════════════`,
-      ``,
-      `Total Orders: ${summary.total_orders}`,
-      `Total Revenue: ${summary.total_revenue.toFixed(0)} ALL`,
-      ``,
-      `───────────────────────────────────────`,
-      `PRODUCTS SOLD`,
-      `───────────────────────────────────────`,
-      ``,
-      ...productSummary.map(
-        (p) =>
-          `${p.name.padEnd(20)} x${p.quantity.toString().padStart(3)}  ${p.revenue.toFixed(0).padStart(8)} ALL`
-      ),
-      ``,
-      `───────────────────────────────────────`,
-      `TOTAL: ${summary.total_revenue.toFixed(0)} ALL`,
-      `═══════════════════════════════════════`,
-    ];
-
-    const textContent = lines.join("\n");
-
-    try {
-      const filePath = await save({
-        defaultPath: `day-report-${summary.date}.txt`,
-        filters: [{ name: "Text", extensions: ["txt"] }],
-      });
-      if (filePath) {
-        await writeTextFile(filePath, textContent);
-        alert("TXT saved successfully!");
-      }
-    } catch (e) {
-      alert("Failed to save TXT: " + e);
-      console.error("Failed to save TXT:", e);
-    }
-  };
 
   return (
     <div className="modal-overlay">
@@ -161,13 +90,18 @@ export function DayCloseModal({
         )}
 
         <div className="export-buttons">
-          <button className="export-btn" onClick={exportToCSV}>
+          <button className="export-btn primary" onClick={() => exportToExcel(summary)}>
+            Export Excel
+          </button>
+          <button className="export-btn" onClick={() => exportToCSV(summary)}>
             Export CSV
           </button>
-          <button className="export-btn" onClick={exportToText}>
+          <button className="export-btn" onClick={() => exportToText(summary)}>
             Export TXT
           </button>
         </div>
+
+        {children}
 
         <div className="modal-actions">
           <button onClick={onCancel} disabled={loading}>

@@ -87,6 +87,16 @@ impl Database {
                 total_orders INTEGER NOT NULL,
                 closed_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
+
+            -- Day sessions (tracks when day is open for business)
+            CREATE TABLE IF NOT EXISTS day_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date DATE NOT NULL UNIQUE,
+                started_by INTEGER NOT NULL,
+                started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                is_active INTEGER DEFAULT 1,
+                FOREIGN KEY (started_by) REFERENCES staff(id)
+            );
             "
         )?;
 
@@ -115,6 +125,81 @@ impl Database {
         }
         if !columns.contains(&"table_number".to_string()) {
             conn.execute("ALTER TABLE orders ADD COLUMN table_number INTEGER NOT NULL DEFAULT 1", [])?;
+        }
+
+        // Session-based architecture migration
+        // Add session_id to orders table
+        if !columns.contains(&"session_id".to_string()) {
+            conn.execute("ALTER TABLE orders ADD COLUMN session_id INTEGER", [])?;
+        }
+
+        // Add closing fields to day_sessions
+        let session_columns: Vec<String> = conn
+            .prepare("PRAGMA table_info(day_sessions)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        if !session_columns.contains(&"closed_at".to_string()) {
+            conn.execute("ALTER TABLE day_sessions ADD COLUMN closed_at DATETIME", [])?;
+        }
+        if !session_columns.contains(&"total_revenue".to_string()) {
+            conn.execute("ALTER TABLE day_sessions ADD COLUMN total_revenue REAL", [])?;
+        }
+        if !session_columns.contains(&"total_orders".to_string()) {
+            conn.execute("ALTER TABLE day_sessions ADD COLUMN total_orders INTEGER", [])?;
+        }
+
+        // Backfill session_id for existing orders that don't have one
+        conn.execute(
+            "UPDATE orders SET session_id = (
+                SELECT ds.id FROM day_sessions ds
+                WHERE orders.created_at >= ds.started_at
+                ORDER BY ds.started_at DESC LIMIT 1
+            ) WHERE session_id IS NULL",
+            [],
+        )?;
+
+        // Create index for session_id lookups
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_orders_session_id ON orders(session_id)",
+            [],
+        )?;
+
+        // Remove UNIQUE constraint on date in day_sessions by recreating the table
+        // Check if we need to migrate (look for UNIQUE constraint)
+        let table_sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='day_sessions'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or_default();
+
+        if table_sql.contains("UNIQUE") {
+            // Need to recreate table without UNIQUE constraint
+            conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS day_sessions_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date DATE,
+                    started_by INTEGER NOT NULL,
+                    started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    is_active INTEGER DEFAULT 1,
+                    closed_at DATETIME,
+                    total_revenue REAL,
+                    total_orders INTEGER,
+                    FOREIGN KEY (started_by) REFERENCES staff(id)
+                );
+
+                INSERT INTO day_sessions_new (id, date, started_by, started_at, is_active, closed_at, total_revenue, total_orders)
+                SELECT id, date, started_by, started_at, is_active, closed_at, total_revenue, total_orders FROM day_sessions;
+
+                DROP TABLE day_sessions;
+
+                ALTER TABLE day_sessions_new RENAME TO day_sessions;
+                ",
+            )?;
         }
 
         Ok(())

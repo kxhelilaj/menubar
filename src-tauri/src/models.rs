@@ -95,19 +95,23 @@ pub struct OrderWithItems {
     pub items: Vec<OrderItem>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct DayClosing {
-    pub id: i64,
-    pub date: String,
-    pub total_revenue: f64,
-    pub total_orders: i32,
-    pub closed_at: String,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DaySummary {
     pub date: String,
     pub total_revenue: f64,
     pub total_orders: i32,
     pub orders: Vec<OrderWithItems>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DaySession {
+    pub id: i64,
+    pub date: Option<String>,           // Now optional (sessions can span dates)
+    pub started_by: i64,
+    pub started_by_name: Option<String>,
+    pub started_at: String,
+    pub closed_at: Option<String>,      // When session was closed
+    pub is_active: bool,
+    pub total_revenue: Option<f64>,     // Stored at close time
+    pub total_orders: Option<i32>,      // Stored at close time
 }

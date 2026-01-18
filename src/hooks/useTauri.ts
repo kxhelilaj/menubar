@@ -8,8 +8,8 @@ import {
   CreateStaff,
   CreateOrder,
   OrderWithItems,
-  DayClosing,
   DaySummary,
+  DaySession,
 } from "../types";
 
 // Categories
@@ -48,12 +48,28 @@ export const addItemsToOrder = (orderId: number, items: { product_id: number; qu
   invoke<OrderWithItems>("add_items_to_order", { orderId, items });
 export const markOrderPaid = (orderId: number) =>
   invoke<OrderWithItems>("mark_order_paid", { orderId });
+export const decreaseItemQuantity = (orderItemId: number) =>
+  invoke<OrderWithItems | null>("decrease_item_quantity", { orderItemId });
+export const increaseItemQuantity = (orderItemId: number) =>
+  invoke<OrderWithItems>("increase_item_quantity", { orderItemId });
 export const updateOrderNotes = (orderId: number, customerName: string | null, notes: string | null) =>
   invoke<OrderWithItems>("update_order_notes", { orderId, customerName, notes });
 
 // Reports
-export const closeDay = () => invoke<DayClosing>("close_day");
+export const closeDay = () => invoke<DaySession>("close_day");
 export const getSalesHistory = (limit?: number) =>
-  invoke<DayClosing[]>("get_sales_history", { limit });
-export const getDaySummary = (date?: string) =>
-  invoke<DaySummary>("get_day_summary", { date });
+  invoke<DaySession[]>("get_sales_history", { limit });
+export const getDaySummary = (sessionId?: number) =>
+  invoke<DaySummary>("get_day_summary", { sessionId });
+export const getOrdersByDateRange = (startDate: string, endDate: string) =>
+  invoke<OrderWithItems[]>("get_orders_by_date_range", { startDate, endDate });
+export const createDayClosingForDate = (date: string) =>
+  invoke<DaySession>("create_day_closing_for_date", { date });
+
+// Day Sessions
+export const getActiveSession = () =>
+  invoke<DaySession | null>("get_active_session");
+export const startDay = (staffId: number) =>
+  invoke<DaySession>("start_day", { staffId });
+export const isDayActive = () =>
+  invoke<boolean>("is_day_active");

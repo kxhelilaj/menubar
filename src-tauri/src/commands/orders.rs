@@ -7,6 +7,15 @@ pub fn create_order(app: AppHandle, order: CreateOrder) -> Result<OrderWithItems
     let db = app.db();
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
+    // Check if there's an active day session and get its ID
+    let session_id: i64 = conn
+        .query_row(
+            "SELECT id FROM day_sessions WHERE is_active = 1",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|_| "Day is not started. Please start the day first.".to_string())?;
+
     // Calculate total and validate stock
     let mut total = 0.0;
     let mut item_details: Vec<(i64, i32, f64, String)> = Vec::new();
@@ -31,10 +40,10 @@ pub fn create_order(app: AppHandle, order: CreateOrder) -> Result<OrderWithItems
         item_details.push((item.product_id, item.quantity, price, name));
     }
 
-    // Create order with status 'open'
+    // Create order with status 'open' and link to session
     conn.execute(
-        "INSERT INTO orders (staff_id, table_number, total, customer_name, notes, status) VALUES (?1, ?2, ?3, ?4, ?5, 'open')",
-        rusqlite::params![order.staff_id, order.table_number, total, order.customer_name, order.notes],
+        "INSERT INTO orders (staff_id, table_number, total, customer_name, notes, status, session_id) VALUES (?1, ?2, ?3, ?4, ?5, 'open', ?6)",
+        rusqlite::params![order.staff_id, order.table_number, total, order.customer_name, order.notes, session_id],
     )
     .map_err(|e| e.to_string())?;
 
@@ -191,6 +200,152 @@ pub fn mark_order_paid(app: AppHandle, orderId: i64) -> Result<OrderWithItems, S
     if conn.changes() == 0 {
         return Err("Order not found or already paid".to_string());
     }
+
+    drop(conn);
+    get_order(app, order_id)
+}
+
+/// Decrease item quantity by 1. If quantity becomes 0, remove the item.
+/// If order has no items left, delete the order.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn decrease_item_quantity(app: AppHandle, orderItemId: i64) -> Result<Option<OrderWithItems>, String> {
+    let item_id = orderItemId;
+    let db = app.db();
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Get the item details
+    let (order_id, product_id, quantity, price_at_sale): (i64, i64, i32, f64) = conn
+        .query_row(
+            "SELECT order_id, product_id, quantity, price_at_sale FROM order_items WHERE id = ?1",
+            [item_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(|_| "Order item not found".to_string())?;
+
+    // Check if order is still open
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM orders WHERE id = ?1",
+            [order_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "Order not found".to_string())?;
+
+    if status != "open" {
+        return Err("Cannot modify items on a paid order".to_string());
+    }
+
+    if quantity <= 1 {
+        // Remove the item entirely
+        conn.execute("DELETE FROM order_items WHERE id = ?1", [item_id])
+            .map_err(|e| e.to_string())?;
+    } else {
+        // Decrease quantity by 1
+        conn.execute(
+            "UPDATE order_items SET quantity = quantity - 1 WHERE id = ?1",
+            [item_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    // Restore 1 unit to inventory
+    conn.execute(
+        "UPDATE products SET quantity = quantity + 1 WHERE id = ?1",
+        [product_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Update order total (subtract price of 1 item)
+    conn.execute(
+        "UPDATE orders SET total = total - ?1 WHERE id = ?2",
+        rusqlite::params![price_at_sale, order_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Check if order has any items left
+    let remaining_items: i32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM order_items WHERE order_id = ?1",
+            [order_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    // If no items left, delete the order
+    if remaining_items == 0 {
+        conn.execute("DELETE FROM orders WHERE id = ?1", [order_id])
+            .map_err(|e| e.to_string())?;
+        return Ok(None);
+    }
+
+    drop(conn);
+    Ok(Some(get_order(app, order_id)?))
+}
+
+/// Increase item quantity by 1 (if stock is available)
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn increase_item_quantity(app: AppHandle, orderItemId: i64) -> Result<OrderWithItems, String> {
+    let item_id = orderItemId;
+    let db = app.db();
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Get the item details
+    let (order_id, product_id, price_at_sale): (i64, i64, f64) = conn
+        .query_row(
+            "SELECT order_id, product_id, price_at_sale FROM order_items WHERE id = ?1",
+            [item_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|_| "Order item not found".to_string())?;
+
+    // Check if order is still open
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM orders WHERE id = ?1",
+            [order_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "Order not found".to_string())?;
+
+    if status != "open" {
+        return Err("Cannot modify items on a paid order".to_string());
+    }
+
+    // Check stock availability
+    let stock: i32 = conn
+        .query_row(
+            "SELECT quantity FROM products WHERE id = ?1",
+            [product_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "Product not found".to_string())?;
+
+    if stock < 1 {
+        return Err("Insufficient stock".to_string());
+    }
+
+    // Increase quantity by 1
+    conn.execute(
+        "UPDATE order_items SET quantity = quantity + 1 WHERE id = ?1",
+        [item_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Deduct 1 from inventory
+    conn.execute(
+        "UPDATE products SET quantity = quantity - 1 WHERE id = ?1",
+        [product_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Update order total (add price of 1 item)
+    conn.execute(
+        "UPDATE orders SET total = total + ?1 WHERE id = ?2",
+        rusqlite::params![price_at_sale, order_id],
+    )
+    .map_err(|e| e.to_string())?;
 
     drop(conn);
     get_order(app, order_id)

@@ -82,14 +82,6 @@ export interface OrderWithItems {
   items: OrderItem[];
 }
 
-export interface DayClosing {
-  id: number;
-  date: string;
-  total_revenue: number;
-  total_orders: number;
-  closed_at: string;
-}
-
 export interface DaySummary {
   date: string;
   total_revenue: number;
@@ -100,4 +92,16 @@ export interface DaySummary {
 export interface CartItem {
   product: Product;
   quantity: number;
+}
+
+export interface DaySession {
+  id: number;
+  date: string | null;           // Now optional (sessions can span dates)
+  started_by: number;
+  started_by_name: string | null;
+  started_at: string;
+  closed_at: string | null;      // When session was closed
+  is_active: boolean;
+  total_revenue: number | null;  // Stored at close time
+  total_orders: number | null;   // Stored at close time
 }
