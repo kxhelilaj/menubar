@@ -151,11 +151,20 @@ impl Database {
         }
 
         // Backfill session_id for existing orders that don't have one
+        // First try to match by timestamp
         conn.execute(
             "UPDATE orders SET session_id = (
                 SELECT ds.id FROM day_sessions ds
                 WHERE orders.created_at >= ds.started_at
                 ORDER BY ds.started_at DESC LIMIT 1
+            ) WHERE session_id IS NULL",
+            [],
+        )?;
+
+        // Link remaining orphan orders to active session (if any)
+        conn.execute(
+            "UPDATE orders SET session_id = (
+                SELECT id FROM day_sessions WHERE is_active = 1 LIMIT 1
             ) WHERE session_id IS NULL",
             [],
         )?;
